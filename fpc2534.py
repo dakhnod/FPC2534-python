@@ -1,4 +1,3 @@
-import serial
 import struct
 import time
 import sys
@@ -199,8 +198,6 @@ def parse_image_data(data):
         'max_chunk_size': max_chunk_size
     }
 
-port = serial.Serial('/dev/cu.usbmodem00370014500e1')
-
 def send_packet(data, secure):
     flags = 0x10
     length = len(data)
@@ -223,21 +220,21 @@ def send_packet(data, secure):
 
         data = nonce + data[-16:] + data[:-16]
 
-    port.write(header + data)
+    return header + data
 
-def read_response():
-    header = port.read(8)
+def parse_response(data):
+    header = data[:8]
     version, type, flags, length = struct.unpack('<HHHH', header)
 
     secure = (flags & 1) != 0
 
     if secure:
-        iv = port.read(12)
-        gmac = port.read(16)
+        iv = data[8:20]
+        gmac = data[20:36]
 
         cipher = AESGCM(KEY)
 
-        data = port.read(length - 28)
+        data = data[36:]
 
         response = cipher.decrypt(
             nonce=iv,
@@ -245,7 +242,7 @@ def read_response():
             associated_data=header
         )
     else:
-        response = port.read(length)
+        response = data[8:]
 
     cmd, type = struct.unpack('<HH', response[:4])
     
@@ -259,9 +256,7 @@ def read_response():
 def send_request(request_cmd, payload=[], secure=True):
     data = struct.pack('<HH', request_cmd, 0x11) + bytes(payload)
 
-    send_packet(data, secure)
-
-    return read_response()
+    return send_packet(data, secure)
 
 def enroll_finger(id=None):
     id_type = 0x4045 if id is None else 0x3034
@@ -285,21 +280,7 @@ def identify_finger(id=None):
     id_type = 0x2023 if id is None else 0x3034
     id = 0 if id is None else id
     print(send_request(CMD_IDENTIFY, struct.pack('<HHH', id_type, id, 0)))
-
-    while True:
-        response = read_response()
-        if response.get('finger_found') is not None:
-            return response
         
-def await_ready_state():
-    while True:
-        event = read_response()
-
-        if event.get('states') is None:
-            continue
-
-        if event['states'] in [['STATE_APP_FW_READY'], ['STATE_APP_FW_READY', 'STATE_SECURE_INTERFACE']]:
-            return
         
 def download_data(total_size, max_chunk_size):
     data = bytes()
@@ -395,7 +376,7 @@ while False:
 # print(send_request(CMD_GET_SYSTEM_CONFIG, b'\x01\x00'))
 # send_request(CMD_ABORT)
 
-while True:
+while False:
     result = identify_finger()
     print(result)
     await_ready_state()
