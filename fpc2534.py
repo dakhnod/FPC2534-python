@@ -253,7 +253,7 @@ def parse_response(data):
     else:
         raise RuntimeError('Unknown incoming packet type')
 
-def send_request(request_cmd, payload=[], secure=True):
+def send_request(request_cmd, payload=[], secure=False):
     data = struct.pack('<HH', request_cmd, 0x11) + bytes(payload)
 
     return send_packet(data, secure)
@@ -261,7 +261,7 @@ def send_request(request_cmd, payload=[], secure=True):
 def enroll_finger(id=None):
     id_type = 0x4045 if id is None else 0x3034
     id = 0 if id is None else id
-    print(send_request(CMD_ENROLL, struct.pack('<HH', id_type, id)))
+    return send_request(CMD_ENROLL, struct.pack('<HH', id_type, id))
 
     while True:
         response = read_response()
@@ -279,7 +279,7 @@ def enroll_finger(id=None):
 def identify_finger(id=None):
     id_type = 0x2023 if id is None else 0x3034
     id = 0 if id is None else id
-    print(send_request(CMD_IDENTIFY, struct.pack('<HHH', id_type, id, 0)))
+    return send_request(CMD_IDENTIFY, struct.pack('<HHH', id_type, id, 0))
         
         
 def download_data(total_size, max_chunk_size):
