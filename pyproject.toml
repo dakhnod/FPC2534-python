@@ -1,0 +1,6 @@
+[project]
+name = "fpc2534"
+version = "0.0.1"
+dependencies = [
+    "cryptography"
+]
