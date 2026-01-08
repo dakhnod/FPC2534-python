@@ -197,6 +197,22 @@ class FPC2534:
             'type': image_type,
             'max_chunk_size': max_chunk_size
         }
+    
+    @parser(CMD_PUT_TEMPLATE_DATA)
+    def _parse_put_template_data(data):
+        id, chunk_size, total_size = struct.unpack('<HHH', data)
+
+        return {
+            'id': id,
+            'chunk_size': chunk_size,
+            'total_size': total_size
+        }
+    
+    @parser(CMD_DATA_PUT)
+    def _parse_data_put(data):
+        return {
+            'total_received': struct.unpack('<I', data)
+        }
 
     def _wrap_packet(self, data, secure):
         flags = 0x10
@@ -273,6 +289,13 @@ class FPC2534:
         id_type = 0x2023 if id is None else 0x3034
         id = 0 if id is None else id
         return self.encode_request(CMD_IDENTIFY, struct.pack('<HHH', id_type, id, 0))
+    
+    def upload_template(self, id, size):
+        return self.encode_request(CMD_PUT_TEMPLATE_DATA, struct.pack('<HH', id, size))
+    
+    def data_put(self, remaining_size, data):
+        payload = struct.pack('<II', remaining_size, len(data)) + data
+        return self.encode_request(CMD_DATA_PUT, payload)
             
     def set_system_config(self, version, finger_scan_interval, event_at_boot, uart_stop_mode, irq_before_tx, allow_factory_reset, uart_irq_delay, uart_baudrate, max_consecutive_fails, lockout_time, idle_before_sleep, enroll_touches, immobile_touches, i2c_address):
         sys_flags = 0
