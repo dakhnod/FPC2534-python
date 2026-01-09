@@ -4,5 +4,5 @@ version = "0.0.1"
 dependencies = [
     "cryptography",
     "quart",
-    "git+https://github.com/sbtinstruments/asyncio-mqtt"
+    "asyncio-mqtt@git+https://github.com/sbtinstruments/asyncio-mqtt"
 ]
