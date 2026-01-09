@@ -2,7 +2,7 @@ import quart
 import os
 import aiomqtt
 import asyncio
-import fpc2534
+import fpc2534 as fpc2534
 import functools
 
 sensor = fpc2534.FPC2534()
