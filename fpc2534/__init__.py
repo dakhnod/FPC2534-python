@@ -213,8 +213,16 @@ class FPC2534:
         return {
             'total_received': struct.unpack('<I', data)
         }
+        
+    @parser(CMD_LIST_TEMPLATES)
+    def _parse_list_templates(data):
+        short_count = int(len(data) / 2)
+        # first entry is count of ids
+        return {
+            'template_ids': struct.unpack(f'<{short_count}H', data)[1:]
+        }
 
-    def _wrap_packet(self, data, secure):
+    def _wrap_packet(self, data):
         flags = 0x10
         length = len(data)
         
@@ -274,10 +282,16 @@ class FPC2534:
         else:
             raise RuntimeError('Unknown incoming packet type')
 
-    def encode_request(self, request_cmd, payload=[], secure=False):
+    def encode_request(self, request_cmd, payload=[]):
         data = struct.pack('<HH', request_cmd, 0x11) + bytes(payload)
 
-        return self._wrap_packet(data, secure)
+        return self._wrap_packet(data)
+    
+    def request_image_data(self):
+        return self.encode_request(CMD_IMAGE_DATA, struct.pack('<I', 2))
+    
+    def abort(self):
+        return self.encode_request(CMD_ABORT)
 
     def enroll_finger(self, id=None):
         id_type = 0x4045 if id is None else 0x3034
@@ -293,9 +307,21 @@ class FPC2534:
     def upload_template(self, id, size):
         return self.encode_request(CMD_PUT_TEMPLATE_DATA, struct.pack('<HH', id, size))
     
+    def download_template(self, id):
+        return self.encode_request(CMD_GET_TEMPLATE_DATA, struct.pack('<HH', id, 0))
+    
+    def delete_template(self, id):
+        return self.encode_request(CMD_DELETE_TEMPLATE, struct.pack('<HH', 0x3034, id))
+    
     def data_put(self, remaining_size, data):
         payload = struct.pack('<II', remaining_size, len(data)) + data
         return self.encode_request(CMD_DATA_PUT, payload)
+    
+    def data_get(self, chunk_size):
+        return self.encode_request(CMD_DATA_GET, struct.pack('<I', chunk_size))
+    
+    def get_system_config(self, default=False):
+        return self.encode_request(CMD_GET_SYSTEM_CONFIG, struct.pack('<H', int(not default)))
             
     def set_system_config(self, version, finger_scan_interval, event_at_boot, uart_stop_mode, irq_before_tx, allow_factory_reset, uart_irq_delay, uart_baudrate, max_consecutive_fails, lockout_time, idle_before_sleep, enroll_touches, immobile_touches, i2c_address):
         sys_flags = 0

@@ -2,5 +2,7 @@
 name = "fpc2534"
 version = "0.0.1"
 dependencies = [
-    "cryptography"
+    "cryptography",
+    "quart",
+    "git+https://github.com/sbtinstruments/asyncio-mqtt"
 ]
