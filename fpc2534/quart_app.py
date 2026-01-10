@@ -194,3 +194,19 @@ async def _get_image():
 @app.get('/sensor/config/current')
 async def _get_system_config():
     return await send_data(sensor.get_system_config(quart.request.url.endswith('default')))
+
+@app.route('/sensor/config', methods=['PUT', 'POST'])
+@app.route('/sensor/config/current', methods=['PUT', 'POST'])
+async def _set_system_config():
+    # untested
+    payload = await quart.request.json
+    return await send_data(sensor.set_system_config(**payload))
+
+@app.route('/sensor/key', methods=['PUT', 'POST'])
+async def _set_key():
+    # untested
+    key = await quart.request.get_data()
+    if len(key) not in [16, 32]:
+        return 'Key must be of length 16 or 32', 400
+    
+    return await send_data(sensor.set_key(key))

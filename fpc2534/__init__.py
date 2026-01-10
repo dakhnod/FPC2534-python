@@ -298,6 +298,13 @@ class FPC2534:
         id = 0 if id is None else id
         return self.encode_request(CMD_ENROLL, struct.pack('<HH', id_type, id))
 
+    def set_key(self, key):
+        if len(key) not in [16, 32]:
+            raise RuntimeError('key must be of length 16 or 32')
+        return self.encode_request(
+            CMD_SET_CRYPTO_KEY,
+            struct.pack(f'<B{len(key)}B', len(key), *key)
+        )
 
     def identify_finger(self, id=None):
         id_type = 0x2023 if id is None else 0x3034
