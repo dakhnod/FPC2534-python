@@ -11,17 +11,63 @@ if key:
     key = bytes.fromhex(key)
 sensor = fpc2534.FPC2534(key)
 
-response_queue = asyncio.Queue()
+finite_action_queue = None
+infinite_action_queue = asyncio.Queue()
+finite_action_finished = asyncio.Event()
 
-async def send_data(data, wait_for_response=True):
-    payload = ','.join(map(str, data))
+identify_queues: set[asyncio.Queue] = set()
+identification_subscriber_appeared = asyncio.Event()
+
+
+async def identify_loop():
+    while True:
+        if len(identify_queues) == 0:
+            identification_subscriber_appeared.clear()
+            await identification_subscriber_appeared.wait()
+            continue
+        
+        response = send_data(sensor.identify_finger(), infinite_action_queue)
+        
+        print(f'identify response: {response}')
+        
+        states = response.get('states', [])
+        
+        if 'STATE_IDENTIFY' not in states:
+            await asyncio.sleep(10)
+            
+            continue
+        
+        while True:
+            await finite_action_finished.clear()
+            done, pending = await asyncio.wait([
+                asyncio.create_task(finite_action_finished.wait(), name='finite'),
+                asyncio.create_task(infinite_action_queue.get())
+            ], return_when='ONE_COMPLETED')
+        
+            done = done.pop()
+            pending.pop().cancel()
+            
+            if done.get_name() == 'finite':
+                # restart identify
+                break
+            
+            for queue in identify_queues:
+                await queue.put(done.result)
+                
+            if response['event'] == 'EVENT_FINGER_LOST':
+                # allow to restart identification
+                break
+
+async def send_data(data, response_loop=None):
     await app.mqtt_client.publish(
         'ble_devices/cb:6f:0f:38:a5:24/383f0000-7947-d815-7830-14f1584109c5/383f0001-7947-d815-7830-14f1584109c5/Set',
-        payload
+        ','.join(map(str, data))
     )
     
-    if wait_for_response:
-        return await response_queue.get()
+    if response_loop is None:
+        response_loop = finite_action_queue
+    
+    return await finite_action_queue.get()
 
 app = quart.Quart(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 640000
@@ -35,11 +81,16 @@ async def loop_messages():
         app.mqtt_client = client
         await client.subscribe('ble_devices/cb:6f:0f:38:a5:24/383f0000-7947-d815-7830-14f1584109c5/383f0002-7947-d815-7830-14f1584109c5')
         async for message in client.messages:
-            await response_queue.put(
-                sensor.parse_response(
-                    bytes(map(int, message.payload.decode().split(',')))
-                )
+            response = sensor.parse_response(
+                bytes(map(int, message.payload.decode().split(',')))
             )
+            
+            print(response)
+                    
+            if finite_action_queue is not None:
+                await finite_action_queue.put(response)
+            else:
+                await infinite_action_queue.put(response)
             
 async def get_status(filtered_states=['STATE_APP_FW_READY', 'STATE_SECURE_INTERFACE']):
     response = await send_data(sensor.encode_request(fpc2534.CMD_STATUS))
@@ -77,6 +128,30 @@ async def ensure_idle():
 @app.before_serving
 async def _start_loop():
     asyncio.create_task(loop_messages())
+    asyncio.create_task(identify_loop())
+    
+@app.before_request
+async def _before_request():
+    if quart.request.url == '/sensor/identify':
+        return
+    
+    global finite_action_queue
+    if finite_action_queue is not None:
+        return 'Another finite request is already running', 503
+    
+    finite_action_queue = asyncio.Queue()
+
+@app.after_request
+async def _after_request(response):
+    if quart.request.url == '/sensor/identify':
+        return
+    
+    global finite_action_queue
+    finite_action_queue = None
+    
+    finite_action_finished.set()
+    
+    return response
 
 @app.get('/sensor/status')
 async def _get_status():
@@ -134,45 +209,25 @@ async def _upload_demplate(id):
 
 @app.websocket('/sensor/identify')
 async def _identify():
-    state = await get_status()
+    event_queue = asyncio.Queue()
+    identify_queues.add(event_queue)
     
-    async def start_identify():
-        print(await send_data(sensor.identify_finger()))
-    
-    if len(state['states']) == 0 or state['states'][0] != 'STATE_IDENTIFY':
-        print('putting to identify mode...')
-        await send_data(sensor.abort())
-        
-        await start_identify()
-        
-    await quart.websocket.accept()
+    try:
+        await quart.websocket.accept()
+                    
+        while True:
+            response = await event_queue.get()
             
-    print('waiting for identification')
-        
-    while True:
-        done, pending = await asyncio.wait([
-            asyncio.create_task(response_queue.get(), name='response'), 
-            asyncio.create_task(quart.websocket.receive(), name='heartbeat')
-        ], return_when=asyncio.FIRST_COMPLETED)
-        
-        for p in pending:
-            p.cancel()
-                
-        done_task = done.pop()
-                
-        if done_task.get_name() == 'heartbeat':
-            print(f'received heartbeat: {done_task.result()}')
-            continue
-        
-        response = done_task.result()
-        
-        if response.get('finger_found') is not None:
-            response['event'] = 'FINGER_MATCHED'
-        
-        await quart.websocket.send_json(response)
-        
-        if response['event'] == 'EVENT_FINGER_LOST':
-            await start_identify()
+            if response.get('finger_found') is not None:
+                response['event'] = 'FINGER_MATCHED'
+            
+            try:
+                await quart.websocket.send_json(response)
+            except:
+                pass
+    finally:
+        print('subscriber disconnected')
+        identify_queues.remove(event_queue)
             
 @app.get('/sensor/image')
 async def _get_image():
@@ -182,7 +237,7 @@ async def _get_image():
     print(response)
     
     while True:
-        event = await response_queue.get()
+        event = await finite_action_queue.get()
         if event['event'] == 'EVENT_FINGER_LOST':
             image_available = 'STATE_IMAGE_AVAILABLE' in event['states']
             break
@@ -202,6 +257,7 @@ async def _get_image():
 @app.get('/sensor/config/current')
 async def _get_system_config():
     return await send_data(sensor.get_system_config(quart.request.url.endswith('default')))
+
 
 @app.route('/sensor/config', methods=['PUT', 'POST'])
 @app.route('/sensor/config/current', methods=['PUT', 'POST'])
@@ -229,7 +285,7 @@ async def _enroll():
     print('awaiting events')
     
     while True:
-        response = await response_queue.get()
+        response = await finite_action_queue.get()
         
         if response.get('feedback') in ['ENROLL_FEEDBACK_PROGRESS', 'ENROLL_FEEDBACK_REJECT_LOW_QUALITY']:
             # right within process
@@ -241,7 +297,7 @@ async def _enroll():
         
         result = response
         # await FINGER_LOST event
-        await response_queue.get()
+        await finite_action_queue.get()
         return result
 
 @app.post('/sensor/reset')
