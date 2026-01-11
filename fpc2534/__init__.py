@@ -303,7 +303,7 @@ class FPC2534:
             raise RuntimeError('key must be of length 16 or 32')
         return self.encode_request(
             CMD_SET_CRYPTO_KEY,
-            struct.pack(f'<B{len(key)}B', len(key), *key)
+            struct.pack(f'<B{len(key)}BB', len(key), *key, 0)
         )
 
     def identify_finger(self, id=None):

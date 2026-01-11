@@ -4,8 +4,12 @@ import aiomqtt
 import asyncio
 import fpc2534 as fpc2534
 import functools
+import os
 
-sensor = fpc2534.FPC2534()
+key = os.environ.get('FPC2534_KEY')
+if key:
+    key = bytes.fromhex(key)
+sensor = fpc2534.FPC2534(key)
 
 response_queue = asyncio.Queue()
 
@@ -23,7 +27,10 @@ app = quart.Quart(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 640000
 
 async def loop_messages():
-    async with aiomqtt.Client('localhost') as client:
+    async with aiomqtt.Client(
+            os.environ.get('MQTT_HOST', 'localhost'), 
+            int(os.environ.get('MQTT_PORT', 1883))
+        ) as client:
         print('connected')
         app.mqtt_client = client
         await client.subscribe('ble_devices/cb:6f:0f:38:a5:24/383f0000-7947-d815-7830-14f1584109c5/383f0002-7947-d815-7830-14f1584109c5')
@@ -199,13 +206,12 @@ async def _get_system_config():
 @app.route('/sensor/config', methods=['PUT', 'POST'])
 @app.route('/sensor/config/current', methods=['PUT', 'POST'])
 async def _set_system_config():
-    # untested
     payload = await quart.request.json
+    del payload['type']
     return await send_data(sensor.set_system_config(**payload))
 
 @app.route('/sensor/key', methods=['PUT', 'POST'])
 async def _set_key():
-    # untested
     key = await quart.request.get_data()
     if len(key) not in [16, 32]:
         return 'Key must be of length 16 or 32', 400
@@ -214,8 +220,29 @@ async def _set_key():
 
 @app.post('/sensor/enroll')
 async def _enroll():
-    # untested
-    pass
+    await ensure_idle()
+    response = await send_data(sensor.enroll_finger())
+    
+    if not 'STATE_ENROLL' in response['states']:
+        return response, 500
+    
+    print('awaiting events')
+    
+    while True:
+        response = await response_queue.get()
+        
+        if response.get('feedback') in ['ENROLL_FEEDBACK_PROGRESS', 'ENROLL_FEEDBACK_REJECT_LOW_QUALITY']:
+            # right within process
+            continue
+        
+        if response.get('event') in ['EVENT_FINGER_DETECT', 'EVENT_IMAGE_READY', 'EVENT_FINGER_LOST']:
+            # irrelevant events
+            continue
+        
+        result = response
+        # await FINGER_LOST event
+        await response_queue.get()
+        return result
 
 @app.post('/sensor/reset')
 async def _reset():
