@@ -9,20 +9,21 @@ sensor = fpc2534.FPC2534()
 
 response_queue = asyncio.Queue()
 
-async def send_data(data):
+async def send_data(data, wait_for_response=True):
     payload = ','.join(map(str, data))
     await app.mqtt_client.publish(
         'ble_devices/cb:6f:0f:38:a5:24/383f0000-7947-d815-7830-14f1584109c5/383f0001-7947-d815-7830-14f1584109c5/Set',
         payload
     )
     
-    return await response_queue.get()
+    if wait_for_response:
+        return await response_queue.get()
 
 app = quart.Quart(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 640000
 
 async def loop_messages():
-    async with aiomqtt.Client('home') as client:
+    async with aiomqtt.Client('localhost') as client:
         print('connected')
         app.mqtt_client = client
         await client.subscribe('ble_devices/cb:6f:0f:38:a5:24/383f0000-7947-d815-7830-14f1584109c5/383f0002-7947-d815-7830-14f1584109c5')
@@ -210,3 +211,12 @@ async def _set_key():
         return 'Key must be of length 16 or 32', 400
     
     return await send_data(sensor.set_key(key))
+
+@app.post('/sensor/enroll')
+async def _enroll():
+    # untested
+    pass
+
+@app.post('/sensor/reset')
+async def _reset():
+    return await send_data(sensor.reset())

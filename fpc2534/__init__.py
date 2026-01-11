@@ -348,3 +348,6 @@ class FPC2534:
         payload = struct.pack('<HHIBBBBHBBHH', version, finger_scan_interval, sys_flags, uart_irq_delay, uart_baudrate, max_consecutive_fails, lockout_time, idle_before_sleep, enroll_touches, immobile_touches, i2c_address, 1)
 
         return self.encode_request(CMD_SET_SYSTEM_CONFIG, payload)
+    
+    def reset(self):
+        return self.encode_request(CMD_RESET)
