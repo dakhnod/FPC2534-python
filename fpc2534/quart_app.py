@@ -26,6 +26,10 @@ async def identify_loop():
             await identification_subscriber_appeared.wait()
             continue
         
+        if finite_action_queue is not None:
+            finite_action_finished.clear()
+            await finite_action_finished.wait()
+        
         response = send_data(sensor.identify_finger(), infinite_action_queue)
         
         print(f'identify response: {response}')
@@ -38,11 +42,11 @@ async def identify_loop():
             continue
         
         while True:
-            await finite_action_finished.clear()
+            finite_action_finished.clear()
             done, pending = await asyncio.wait([
                 asyncio.create_task(finite_action_finished.wait(), name='finite'),
                 asyncio.create_task(infinite_action_queue.get())
-            ], return_when='ONE_COMPLETED')
+            ], return_when=asyncio.FIRST_COMPLETED)
         
             done = done.pop()
             pending.pop().cancel()
