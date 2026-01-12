@@ -306,7 +306,10 @@ async def _set_key():
 @app.post('/sensor/enroll')
 async def _enroll():
     await ensure_idle()
-    response = await send_data(sensor.enroll_finger())
+    template_id = quart.request.args.get('template_id')
+    if template_id is not None:
+        template_id = int(template_id)
+    response = await send_data(sensor.enroll_finger(template_id))
     
     if not 'STATE_ENROLL' in response['states']:
         return response, 500
