@@ -211,7 +211,7 @@ class FPC2534:
     @parser(CMD_DATA_PUT)
     def _parse_data_put(data):
         return {
-            'total_received': struct.unpack('<I', data)
+            'total_received': struct.unpack('<I', data)[0]
         }
         
     @parser(CMD_LIST_TEMPLATES)

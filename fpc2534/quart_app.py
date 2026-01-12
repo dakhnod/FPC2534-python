@@ -6,6 +6,9 @@ import fpc2534 as fpc2534
 import functools
 import os
 
+MAX_CHUNK_SIZE = 140
+DOWNLOAD_TIMEOUT = 120
+
 key = os.environ.get('FPC2534_KEY')
 if key:
     key = bytes.fromhex(key)
@@ -25,12 +28,14 @@ async def identify_loop():
             identification_subscriber_appeared.clear()
             await identification_subscriber_appeared.wait()
             continue
+
+        print('awaited subscriber')
         
         if finite_action_queue is not None:
             finite_action_finished.clear()
             await finite_action_finished.wait()
         
-        response = send_data(sensor.identify_finger(), infinite_action_queue)
+        response = await send_data(sensor.identify_finger(), infinite_action_queue)
         
         print(f'identify response: {response}')
         
@@ -40,6 +45,8 @@ async def identify_loop():
             await asyncio.sleep(10)
             
             continue
+
+        print('identify mode activated')
         
         while True:
             finite_action_finished.clear()
@@ -54,11 +61,13 @@ async def identify_loop():
             if done.get_name() == 'finite':
                 # restart identify
                 break
+
+            response = done.result()
             
             for queue in identify_queues:
-                await queue.put(done.result)
+                await queue.put(response)
                 
-            if response['event'] == 'EVENT_FINGER_LOST':
+            if response.get('event') == 'EVENT_FINGER_LOST':
                 # allow to restart identification
                 break
 
@@ -71,7 +80,7 @@ async def send_data(data, response_loop=None):
     if response_loop is None:
         response_loop = finite_action_queue
     
-    return await finite_action_queue.get()
+    return await response_loop.get()
 
 app = quart.Quart(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 640000
@@ -109,17 +118,20 @@ async def download_data(total_size):
     remaining = total_size
     
     while remaining > 0:
-        chunk_size = min(177, remaining)
+        chunk_size = min(MAX_CHUNK_SIZE, remaining)
         get_response = await send_data(sensor.data_get(chunk_size))
-        print(remaining, get_response, len(get_response.get('data')))
         yield get_response['data']
         remaining = get_response['remaining']
+
+    global finite_action_queue
+    finite_action_queue = None
+    finite_action_finished.set()
         
 async def respond_download(total_size):
     res = await quart.make_response(download_data(total_size), 200, {
         'Content-Length': total_size
     })
-    res.timeout = 120
+    res.timeout = DOWNLOAD_TIMEOUT
     
     return res
 
@@ -146,9 +158,17 @@ async def _before_request():
     finite_action_queue = asyncio.Queue()
 
 @app.after_request
-async def _after_request(response):
+async def _after_request(response: quart.wrappers.Response):
     if quart.request.url == '/sensor/identify':
         return
+    
+    if response.status_code == 503:
+        # request rejected anyway
+        return response
+    
+    if response.timeout == DOWNLOAD_TIMEOUT:
+        # generator, will clean up itself
+        return response
     
     global finite_action_queue
     finite_action_queue = None
@@ -199,16 +219,14 @@ async def _upload_demplate(id):
     data = await quart.request.get_data()
     
     while remaining > 0:
-        chunk_size = min(177, remaining)
+        chunk_size = min(MAX_CHUNK_SIZE, remaining)
         start = data_length - remaining
         chunk = data[start : start + chunk_size]
         
         response = await send_data(sensor.data_put(remaining, chunk))
                 
         remaining = data_length - response['total_received']
-        
-        print(response)
-    
+            
     return 'ok'
 
 @app.websocket('/sensor/identify')
@@ -218,6 +236,10 @@ async def _identify():
     
     try:
         await quart.websocket.accept()
+
+        print('waiting for events')
+
+        identification_subscriber_appeared.set()
                     
         while True:
             response = await event_queue.get()
