@@ -47,6 +47,9 @@ async def identify_loop():
             continue
 
         print('identify mode activated')
+
+        for queue in identify_queues:
+            await queue.put({'event': 'EVENT_IDENTIFY_STARTED'})
         
         while True:
             finite_action_finished.clear()
@@ -245,7 +248,7 @@ async def _identify():
             response = await event_queue.get()
             
             if response.get('finger_found') is not None:
-                response['event'] = 'FINGER_MATCHED'
+                response['event'] = 'EVENT_FINGER_MATCHED'
             
             try:
                 await quart.websocket.send_json(response)
