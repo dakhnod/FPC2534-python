@@ -28,25 +28,19 @@ async def identify_loop():
             identification_subscriber_appeared.clear()
             await identification_subscriber_appeared.wait()
             continue
-
-        print('awaited subscriber')
         
         if finite_action_queue is not None:
             finite_action_finished.clear()
             await finite_action_finished.wait()
         
         response = await send_data(sensor.identify_finger(), infinite_action_queue)
-        
-        print(f'identify response: {response}')
-        
+                
         states = response.get('states', [])
         
         if 'STATE_IDENTIFY' not in states:
             await asyncio.sleep(10)
             
             continue
-
-        print('identify mode activated')
 
         for queue in identify_queues:
             await queue.put({'event': 'EVENT_IDENTIFY_STARTED'})
@@ -100,8 +94,6 @@ async def loop_messages():
             response = sensor.parse_response(
                 bytes(map(int, message.payload.decode().split(',')))
             )
-            
-            print(response)
                     
             if finite_action_queue is not None:
                 await finite_action_queue.put(response)
@@ -141,8 +133,7 @@ async def respond_download(total_size):
 async def ensure_idle():
     status = await get_status()
     if len(status['states']) != 0:
-        print('sending abort')
-        print(await send_data(sensor.abort()))
+        await send_data(sensor.abort())
 
 @app.before_serving
 async def _start_loop():
@@ -162,8 +153,8 @@ async def _before_request():
 
 @app.after_request
 async def _after_request(response: quart.wrappers.Response):
-    if quart.request.url == '/sensor/identify':
-        return
+    if quart.request.path == '/sensor/enroll':
+        return response
     
     if response.status_code == 503:
         # request rejected anyway
@@ -204,8 +195,6 @@ async def _delete_template(id):
     
 @app.put('/sensor/templates/<int:id>')
 async def _upload_demplate(id):
-    print(quart.request.headers)
-    
     data_length = int(quart.request.headers['Content-Length'])
     
     if data_length != 18000:
@@ -240,8 +229,6 @@ async def _identify():
     try:
         await quart.websocket.accept()
 
-        print('waiting for events')
-
         identification_subscriber_appeared.set()
                     
         while True:
@@ -255,7 +242,6 @@ async def _identify():
             except:
                 pass
     finally:
-        print('subscriber disconnected')
         identify_queues.remove(event_queue)
             
 @app.get('/sensor/image')
@@ -263,7 +249,6 @@ async def _get_image():
     await ensure_idle()
     
     response = await send_data(sensor.encode_request(fpc2534.CMD_CAPTURE))
-    print(response)
     
     while True:
         event = await finite_action_queue.get()
@@ -275,7 +260,6 @@ async def _get_image():
         return 'Failed capturing image', 500
     
     response = await send_data(sensor.request_image_data())
-    print(response)
     
     if response.get('app_fail_code') == 43:
         return 'No image available', 404
@@ -313,24 +297,51 @@ async def _enroll():
     
     if not 'STATE_ENROLL' in response['states']:
         return response, 500
+        
+    global finite_action_queue
     
-    print('awaiting events')
+    stream = quart.request.headers.get('Accept') == 'multipart/related'
     
-    while True:
-        response = await finite_action_queue.get()
+    async def generator():
+        global finite_action_queue
+        while True:
+            response = await finite_action_queue.get()
+            
+            if stream:
+                yield quart.json.dumps(response) + '\n'
+            else:
+                yield response
+            
+            if response.get('feedback') in ['ENROLL_FEEDBACK_PROGRESS', 'ENROLL_FEEDBACK_REJECT_LOW_QUALITY', 'ENROLL_FEEDBACK_PROGRESS_IMMOBILE']:
+                # right within process
+                continue
+            
+            if response.get('event') in ['EVENT_FINGER_DETECT', 'EVENT_IMAGE_READY', 'EVENT_FINGER_LOST']:
+                # irrelevant events
+                continue
+            
+            # await FINGER_LOST event
+            await finite_action_queue.get()
+            
+            finite_action_queue = None
+            finite_action_finished.set()
+            
+            break
         
-        if response.get('feedback') in ['ENROLL_FEEDBACK_PROGRESS', 'ENROLL_FEEDBACK_REJECT_LOW_QUALITY']:
-            # right within process
-            continue
+    if stream:
+        return generator(), 200, {
+            'Content-Type': 'application/text'
+        }
         
-        if response.get('event') in ['EVENT_FINGER_DETECT', 'EVENT_IMAGE_READY', 'EVENT_FINGER_LOST']:
-            # irrelevant events
-            continue
+    async for event in generator():
+        response = event
+    
+    finite_action_queue = None
+    finite_action_finished.set()
         
-        result = response
-        # await FINGER_LOST event
-        await finite_action_queue.get()
-        return result
+    return response
+        
+    
 
 @app.post('/sensor/reset')
 async def _reset():
