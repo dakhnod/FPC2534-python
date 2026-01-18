@@ -151,6 +151,12 @@ async def _before_request():
     
     finite_action_queue = asyncio.Queue()
 
+def cleanup_request():
+    global finite_action_queue
+    finite_action_queue = None
+    
+    finite_action_finished.set()
+
 @app.after_request
 async def _after_request(response: quart.wrappers.Response):
     if quart.request.path == '/sensor/enroll':
@@ -160,16 +166,20 @@ async def _after_request(response: quart.wrappers.Response):
         # request rejected anyway
         return response
     
-    if response.timeout == DOWNLOAD_TIMEOUT:
+    if getattr(response, 'timeout', None) == DOWNLOAD_TIMEOUT:
         # generator, will clean up itself
         return response
     
-    global finite_action_queue
-    finite_action_queue = None
-    
-    finite_action_finished.set()
+    cleanup_request()
     
     return response
+
+@app.teardown_request
+def _teardown_request(exception):
+    if exception is None:
+        return
+    
+    cleanup_request()
 
 @app.get('/sensor/status')
 async def _get_status():
