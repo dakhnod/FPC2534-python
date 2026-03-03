@@ -183,6 +183,7 @@ def _teardown_request(exception):
     
     cleanup_request()
 
+@app.get('/sensor/state')
 @app.get('/sensor/status')
 async def _get_status():
     return await get_status(filtered_states=[])
