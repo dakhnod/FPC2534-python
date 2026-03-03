@@ -94,6 +94,8 @@ async def loop_messages():
             response = sensor.parse_response(
                 bytes(map(int, message.payload.decode().split(',')))
             )
+            
+            print(response)
                     
             if finite_action_queue is not None:
                 await finite_action_queue.put(response)
@@ -310,7 +312,7 @@ async def _enroll():
         
     global finite_action_queue
     
-    stream = quart.request.headers.get('Accept') == 'multipart/related'
+    stream = quart.request.headers.get('Accept') == 'text/event-strea,'
     
     async def generator():
         global finite_action_queue
@@ -318,7 +320,7 @@ async def _enroll():
             response = await finite_action_queue.get()
             
             if stream:
-                yield quart.json.dumps(response) + '\n'
+                yield quart.json.dumps(response)
             else:
                 yield response
             
@@ -340,7 +342,7 @@ async def _enroll():
         
     if stream:
         return generator(), 200, {
-            'Content-Type': 'application/text'
+            'Content-Type': 'text/event-stream'
         }
         
     async for event in generator():
@@ -350,9 +352,11 @@ async def _enroll():
     finite_action_finished.set()
         
     return response
-        
-    
 
 @app.post('/sensor/reset')
 async def _reset():
     return await send_data(sensor.reset())
+
+@app.get('/sensor/selftest')
+async def _selftest():
+    return await send_data(sensor.self_test())

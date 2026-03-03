@@ -69,12 +69,45 @@ ENROLL_STATES = {
 }
 
 APP_CODES = {
+    # Results 0 - 10 is information
+	0: 'FPC_RESULT_OK',
+	1: 'FPC_PENDING_OPERATION',
+	2: 'FPC_RESULT_DATA_NOT_SET',
+	3: 'FPC_RESULT_CMD_ID_NOT_SUPPORTED',
+ 
+    # Errors
 	11: 'FPC_RESULT_FAILURE',
 	12: 'FPC_RESULT_INVALID_PARAM',
 	13: 'FPC_RESULT_WRONG_STATE',
 	14: 'FPC_RESULT_OUT_OF_MEMORY',
 	15: 'FPC_RESULT_TIMEOUT',
 	16: 'FPC_RESULT_NOT_SUPPORTED',
+ 
+    # Template and Users ID Errors
+	20: 'FPC_RESULT_USER_ID_EXISTS',
+	21: 'FPC_RESULT_USER_ID_NOT_FOUND',
+	22: 'FPC_RESULT_STORAGE_IS_FULL',
+	23: 'FPC_RESULT_FLASH_ERROR',
+	24: 'FPC_RESULT_IDENTIFY_LOCKOUT',
+	25: 'FPC_RESULT_STORAGE_IS_EMPTY',
+ 
+    # IO Errors
+	31: 'FPC_RESULT_IO_BUSY',
+	32: 'FPC_RESULT_IO_RUNTIME_FAILURE',
+	33: 'FPC_RESULT_IO_BAD_DATA',
+	34: 'FPC_RESULT_IO_NOT_SUPPORTED',
+	35: 'FPC_RESULT_IO_NO_DATA',
+ 
+    # Image Capture Errors
+	40: 'FPC_RESULT_COULD_NOT_ARM',
+	41: 'FPC_RESULT_CAPTURE_FAILED',
+	42: 'FPC_RESULT_BAD_IMAGE_QUALITY',
+	43: 'FPC_RESULT_NO_IMAGE',
+ 
+    # Other Errors
+	50: 'FPC_RESULT_SENSOR_ERROR',
+	70: 'FPC_RESULT_PROTOCOL_VERSION_ERROR',
+	101: 'FPC_STARTUP_FAILURE',
 }
 
 PARSERS = {}
@@ -221,6 +254,14 @@ class FPC2534:
         return {
             'template_ids': struct.unpack(f'<{short_count}H', data)[1:]
         }
+        
+    @parser(CMD_BIST)
+    def _parse_bist(data):
+        test_result, verdict = struct.unpack('<HH', data)
+        return {
+            'result': test_result,
+            'pass': verdict == 1
+        }
 
     def _wrap_packet(self, data):
         flags = 0x10
@@ -329,6 +370,9 @@ class FPC2534:
     
     def get_system_config(self, default=False):
         return self.encode_request(CMD_GET_SYSTEM_CONFIG, struct.pack('<H', int(not default)))
+    
+    def self_test(self):
+        return self.encode_request(CMD_BIST)
             
     def set_system_config(self, version, finger_scan_interval, event_at_boot, uart_stop_mode, irq_before_tx, allow_factory_reset, uart_irq_delay, uart_baudrate, max_consecutive_fails, lockout_time, idle_before_sleep, enroll_touches, immobile_touches, i2c_address):
         sys_flags = 0
