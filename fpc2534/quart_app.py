@@ -313,12 +313,19 @@ async def _enroll():
         
     global finite_action_queue
     
-    stream = quart.request.headers.get('Accept') == 'text/event-strea,'
+    stream = quart.request.headers.get('Accept') == 'text/event-stream'
     
     async def generator():
         global finite_action_queue
+        yield quart.json.dumps({'event': 'ENROLL_STARTED'})
         while True:
-            response = await finite_action_queue.get()
+            try:
+                async with asyncio.timeout(60):
+                    response = await finite_action_queue.get()
+            except TimeoutError:
+                await send_data(sensor.abort())
+                yield quart.json.dumps({'error': 'timeout'})
+                return
             
             if stream:
                 yield quart.json.dumps(response)
@@ -341,10 +348,18 @@ async def _enroll():
             
             break
         
+    async def sse_generator():
+        async for data in generator():
+            yield f'data: {data}\n\n'.encode()
+        
     if stream:
-        return generator(), 200, {
-            'Content-Type': 'text/event-stream'
-        }
+        response = await quart.make_response(sse_generator(), 200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Transfer-Encoding': 'chunked'
+        })
+        response.timeout = 300
+        return response
         
     async for event in generator():
         response = event
