@@ -94,9 +94,7 @@ async def loop_messages():
             response = sensor.parse_response(
                 bytes(map(int, message.payload.decode().split(',')))
             )
-            
-            print(response)
-                    
+                                
             if finite_action_queue is not None:
                 await finite_action_queue.put(response)
             else:
